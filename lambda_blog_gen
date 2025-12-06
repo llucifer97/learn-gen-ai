@@ -1,0 +1,62 @@
+import boto3
+import json
+from datetime import datetime
+
+def blog_generate_using_bedrock(blogtopic: str) -> str:
+    model_id = "mistral.mistral-7b-instruct-v0:2"
+    prompt = f"<s>[INST] Write a 200 words blog on the topic {blogtopic} [/INST]</s>"
+
+    body = {
+        "prompt": prompt,
+        "max_tokens": 512,
+        "temperature": 0.5,
+        "top_p": 0.9
+    }
+
+    try:
+        bedrock_runtime = boto3.client("bedrock-runtime", region_name="ap-south-1")
+        response = bedrock_runtime.invoke_model(
+            modelId=model_id,
+            body=json.dumps(body),
+            contentType='application/json',
+            accept='application/json'
+        )
+        result = json.loads(response['body'].read())
+        response_data = result['outputs'][0]['text'].strip()
+        print(response_data)
+        return response_data
+    except Exception as e:
+        print(f"Error generating the blog: {e}")
+        return ""
+
+def save_blog_details_s3(s3_key, s3_bucket, generate_blog):
+    s3 = boto3.client('s3')
+    try:
+        s3.put_object(Bucket=s3_bucket, Key=s3_key, Body=generate_blog)
+        print("Blog saved to S3")
+    except Exception as e:
+        print(f"Error when saving the blog to S3: {e}")
+
+def lambda_handler(event, context):
+    # Handle both direct Lambda tests and API Gateway proxy
+    body = event.get('body')
+    if isinstance(body, str):
+        event = json.loads(body)
+    else:
+        event = event or {}
+
+    blogtopic = event.get('blog_topic', '')
+    generate_blog = blog_generate_using_bedrock(blogtopic=blogtopic)
+
+    if generate_blog:
+        current_time = datetime.now().strftime('%H%M%S')
+        s3_key = f"blog-output/{current_time}.txt"
+        s3_bucket = 'generatedblogwithllm'
+        save_blog_details_s3(s3_key, s3_bucket, generate_blog)
+    else:
+        print("No blog was generated")
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Blog Generation is completed')
+    }
